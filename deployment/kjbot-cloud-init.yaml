@@ -437,41 +437,6 @@ runcmd:
   - mv /opt/kjbot/manifest.json /opt/kjbot/cockpit-kjbot/ 2>/dev/null || true
   - rmdir /opt/kjbot/dist 2>/dev/null || true
   
-  # Inject updated app.tsx with API Key Status Badge (Patching before usage if needed, but since we use pre-built dist, we cant easily patch React source without rebuilding. Wait, user downloads pre-built dist. Changing app.tsx here does NOTHING unless we rebuild.
-  # CRITICAL CORRECTION: I cannot patch app.tsx here effectively because the YAML downloads a PRE-BUILT 'kjbot-manager-final.tar.gz'.
-  # I MUST rebuild the frontend locally and upload it, OR I must accept that I cannot do this via YAML alone easily.
-  # HOWEVER, looking at previous instructions, I seem to be unable to rebuild locally and upload easily in one step without user action.
-  # BUT, the user is willing to recreate server.
-  # Strategy Switch: I will update the local app.tsx (already done), then I will RUN THE BUILD SCRIPT locally, then upload the NEW tar.gz to GitHub.
-  # THIS IS THE ONLY WAY TO GET THE BADGE IN THE NEW SERVER IF IT DOWNLOADS A TAR.GZ.
-  
-  # Wait, let me check if cloud-init builds it.
-  # Line 428: curl ... kjbot-manager-final.tar.gz
-  # Line 432: tar -xzf ...
-  # Line 436: mv /opt/kjbot/dist/*
-  # It does NOT build. It downloads.
-  
-  # So editing app.tsx in local is useless unless I build it.
-  # I will abort this specific tool call and explain to the user I need to build the GUI first.
-  
-  # actually, I can perform the build on the user's machine now.
-  # I will execute the build command on the USER's machine, then upload the new tar.gz to github.
-  # cancelling this edit.
-    <!DOCTYPE html>
-    <html lang="ko">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>KJBOT - TradingView Webhook Trading Bot</title>
-        <script type="module" crossorigin src="index.js"></script>
-        <link rel="stylesheet" crossorigin href="index.css">
-    </head>
-    <body>
-        <div id="root"></div>
-    </body>
-    </html>
-    EOFHTML
-  
   # Start KJBot
   - systemctl daemon-reload
   - systemctl enable kjbot
@@ -492,13 +457,14 @@ final_message: |
   Cockpit: http://<SERVER_IP> (Port 80)
   Webhook: http://<SERVER_IP>/webhook
   
-  Security: IP Whitelist ENABLED
-  TradingView IPs are whitelisted
+  Security: General Mode (All IPs allowed)
   
   Next Steps:
   1. Access Cockpit Dashboard
   2. Click "KJBOT" menu (bottom left)
   3. Configure Binance API keys
-  4. Setup TradingView webhook
+  4. Enable Trading
+  5. Setup TradingView webhook
   
   ========================================
+
