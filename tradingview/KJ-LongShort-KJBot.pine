@@ -1,0 +1,396 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © KJCheon
+// KJBot Webhook Integration
+
+//@version=6
+indicator(title = 'KJ-Bot (롱숏 매매전략)', shorttitle = 'KJ-Bot (롱숏 매매전략)', overlay = true, max_lines_count = 500, max_labels_count = 500, max_bars_back = 5000)
+
+//-----------------------------
+// 기본설정
+//-----------------------------
+show_ha_candles = true
+
+show_di_plus_bg = false
+show_di_minus_bg = false
+di_len = 14
+di_plus_threshold = 20.0
+di_minus_threshold = 20.0
+di_plus_bg_color = color.new(color.lime, 90)
+di_minus_bg_color = color.new(color.green, 85)
+
+parabolic_start = 0.02
+parabolic_increment = 0.05
+parabolic_maximum = 0.2
+parabolic_length = 20
+parabolic_mult = 4.0
+parabolic_sma_color = color.green
+show_sma_line = false
+
+enable_down_cross = true
+crossing_lookback_down = 120
+crossing_line_color_down = color.black
+crossing_line_width_down = 1
+
+show_squeeze = false
+show_lower_squeeze = false
+show_zeroline_near = false
+show_uptrend_first_in_squeeze = false
+show_downtrend_cross_up_lower = false
+
+squeeze_range_pct = 25.0
+squeeze_lookback = 100
+lower_squeeze_range_pct = 5.0
+lower_squeeze_lookback = 100
+squeeze_bg_color = color.new(color.orange, 90)
+lower_squeeze_bg_color = color.new(color.blue, 90)
+zeroline_range_pct = 0.5
+zeroline_bg_color = color.new(color.yellow, 80)
+downtrend_cross_bg_color = color.new(color.green, 70)
+darker_green_bg_color = color.new(color.green, 50)
+
+show_point_label = true
+
+occ_show_lines = false 
+occ_useRes = true 
+occ_intRes = 5
+occ_basisType = 'SMMA'
+occ_basisLen = 8
+occ_offsetSigma = 6
+occ_offsetALMA = 0.85
+
+group_entry_time = '라벨표시'
+enable_entry_time_filter = input.bool(false, title = '필터적용', group = group_entry_time)
+entry_time = input.time(timestamp('2025-10-01 09:00'), title = '표시시점', group = group_entry_time)
+
+group_alert = '알림(얼러트)'
+enable_alert = input.bool(true, title = '모든 매매 시그널', group = group_alert)
+
+// KJBot 설정
+group_kjbot = 'KJBot 설정'
+enable_kjbot = input.bool(true, title = '웹훅 활성', group = group_kjbot)
+kjbot_leverage = input.int(1, title = '레버리지', minval = 1, maxval = 125, group = group_kjbot)
+
+// 포지션 크기 설정
+kjbot_position_mode = input.string('percent', title = '포지션설정 선택', options = ['percent', 'fixed'], group = group_kjbot, tooltip = 'percent: 잔고 퍼센트(복리)\nfixed: 고정 금액')
+kjbot_balance_percent = input.int(10, title = '포지션 비율(%)', minval = 1, maxval = 100, group = group_kjbot, tooltip = '잔고퍼센트 방식 선택시 사용')
+kjbot_amount = input.int(100, title = '포지션 금액(USDT)', minval = 10, group = group_kjbot, tooltip = '고정금액 방식 선택시 사용')
+
+kjbot_partial_percent = input.int(33, title = '분할청산 비율(%)', minval = 1, maxval = 100, group = group_kjbot, tooltip = '1% 수익마다 청산할 포지션 비율')
+
+//-----------------------------
+// 기본로직
+//-----------------------------
+var float ha_close = na
+var float ha_open = na
+var float ha_high = na
+var float ha_low = na
+
+ha_close := (open + high + low + close) / 4
+ha_open := na(ha_open[1]) ? (open + close) / 2 : (ha_open[1] + ha_close[1]) / 2
+ha_high := math.max(high, math.max(ha_open, ha_close))
+ha_low := math.min(low, math.min(ha_open, ha_close))
+
+ha_bull_color = color.new(#26a69a, 0)
+ha_bear_color = color.new(#ef5350, 0)
+ha_candle_color = ha_close >= ha_open ? ha_bull_color : ha_bear_color
+source = ha_close
+
+plotcandle(show_ha_candles ? ha_open : na, show_ha_candles ? ha_high : na, show_ha_candles ? ha_low : na, show_ha_candles ? ha_close : na, title = '하이킨 캔들', color = na, wickcolor = show_ha_candles ? ha_candle_color : na, bordercolor = show_ha_candles ? ha_candle_color : na)
+
+period1 = 20
+offset = 0.85
+sigma = 6.0
+period2 = 50
+period3 = 200
+
+enable_close1 = true 
+alma_width1 = 1
+alma_color1 = color.black
+enable_close2 = true
+alma_width2 = 2
+alma_color2 = color.black
+enable_close3 = false
+alma_width3 = 3
+alma_color3 = color.gray
+
+Close1 = ta.alma(source, period1, offset, sigma)
+Close2 = ta.alma(source, period2, offset, sigma)
+Close3 = ta.alma(source, period3, offset, sigma)
+
+plot(enable_close1 ? Close1 : na, title = '단기', linewidth = alma_width1, color = alma_color1)
+plot(enable_close2 ? Close2 : na, title = '중기', linewidth = alma_width2, color = alma_color2)
+
+occ_variant(type, src, len, offSig, offALMA) =>
+    v1 = ta.sma(src, len)
+    v2 = ta.ema(src, len)
+    v3 = 2 * v2 - ta.ema(v2, len)
+    v4 = 3 * (v2 - ta.ema(v2, len)) + ta.ema(ta.ema(v2, len), len)
+    v5 = ta.wma(src, len)
+    v6 = ta.vwma(src, len)
+    v7 = 0.0
+    v7 := na(v7[1]) ? ta.sma(src, len) : (v7[1] * (len - 1) + src) / len
+    v8 = ta.wma(2 * ta.wma(src, len / 2) - ta.wma(src, len), math.round(math.sqrt(len)))
+    v9 = ta.linreg(src, len, offSig)
+    v10 = ta.alma(src, len, offALMA, offSig)
+    v11 = ta.sma(v1, len)
+    a1 = math.exp(-1.414 * math.pi / len)
+    b1 = 2 * a1 * math.cos(1.414 * math.pi / len)
+    c2 = b1
+    c3 = -a1 * a1
+    c1 = 1 - c2 - c3
+    v12 = 0.0
+    v12 := c1 * (src + nz(src[1])) / 2 + c2 * nz(v12[1]) + c3 * nz(v12[2])
+    ret = type == 'EMA' ? v2 : type == 'DEMA' ? v3 : type == 'TEMA' ? v4 : type == 'WMA' ? v5 : type == 'VWMA' ? v6 : type == 'SMMA' ? v7 : type == 'HullMA' ? v8 : type == 'LSMA' ? v9 : type == 'ALMA' ? v10 : type == 'TMA' ? v11 : type == 'SSMA' ? v12 : v1
+    ret
+
+occ_tf_string(mult) =>
+    mt = timeframe.multiplier * mult
+    mt_clamped = math.min(mt, 1440)
+    timeframe.isminutes ? str.tostring(mt_clamped) : timeframe.isdaily ? str.tostring(mt_clamped) + 'D' : timeframe.isweekly ? str.tostring(mt_clamped) + 'W' : timeframe.ismonthly ? str.tostring(mt_clamped) + 'M' : timeframe.period
+
+occ_reso(exp, mult) =>
+    occ_useRes ? request.security(syminfo.tickerid, occ_tf_string(mult), exp, gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on) : exp
+
+occ_closeSeries = occ_variant(occ_basisType, close, occ_basisLen, occ_offsetSigma, occ_offsetALMA)
+occ_openSeries  = occ_variant(occ_basisType, open,  occ_basisLen, occ_offsetSigma, occ_offsetALMA)
+
+var float occ_closeAlt = na
+var float occ_openAlt  = na
+
+occ_closeAlt := occ_reso(occ_closeSeries, occ_intRes)
+occ_openAlt  := occ_reso(occ_openSeries,  occ_intRes)
+
+parabolic_smaclose = ta.sma(close, 3 * parabolic_length)
+
+//-----------------------------
+// 저항선 및 가격포맷
+//-----------------------------
+var int price_decimal_places = 0
+if barstate.isfirst
+    float test_price = close
+    float rounded = math.round(test_price)
+    if math.abs(test_price - rounded) < 0.000001
+        price_decimal_places := 0 
+    else
+        float decimal_part = math.abs(test_price - rounded)
+        if decimal_part >= 0.1
+            price_decimal_places := 1
+        else if decimal_part >= 0.01
+            price_decimal_places := 2
+        else if decimal_part >= 0.001
+            price_decimal_places := 3
+        else if decimal_part >= 0.0001
+            price_decimal_places := 4
+        else if decimal_part >= 0.00001
+            price_decimal_places := 5
+        else
+            price_decimal_places := 6
+
+format_price_upbit(_price) =>
+    string formatted = ""
+    if price_decimal_places == 0
+        formatted := str.tostring(math.round(_price))
+    else if price_decimal_places == 1
+        formatted := str.tostring(_price, "#.#")
+    else if price_decimal_places == 2
+        formatted := str.tostring(_price, "#.##")
+    else if price_decimal_places == 3
+        formatted := str.tostring(_price, "#.###")
+    else if price_decimal_places == 4
+        formatted := str.tostring(_price, "#.####")
+    else if price_decimal_places == 5
+        formatted := str.tostring(_price, "#.#####")
+    else
+        formatted := str.tostring(_price, "#.######")
+    formatted
+
+var array<int> crossing_bars = array.new_int()
+var array<float> crossing_prices = array.new_float()
+var array<line> crossing_lines = array.new_line()
+var array<bool> crossing_is_up = array.new_bool()
+
+cleanup_lines(_bars, _prices, _lines, _lookback_down, _is_up_array) =>
+    for i = array.size(_bars) - 1 to 0 by 1
+        if bar_index - array.get(_bars, i) > _lookback_down
+            if i < array.size(_lines)
+                line.delete(array.get(_lines, i))
+                array.remove(_lines, i)
+            array.remove(_bars, i)
+            array.remove(_prices, i)
+            if array.size(_is_up_array) > 0
+                array.remove(_is_up_array, i)
+
+update_line_ends(_lines) =>
+    if array.size(_lines) > 0
+        for i = 0 to array.size(_lines) - 1 by 1
+            current_line = array.get(_lines, i)
+            if not na(current_line)
+                line_start = line.get_x1(current_line)
+                current_end = math.max(bar_index + 10, line_start)
+                line.set_x2(current_line, current_end)
+
+if enable_down_cross and enable_close2
+    if array.size(crossing_bars) > 0
+        cleanup_lines(crossing_bars, crossing_prices, crossing_lines, crossing_lookback_down, crossing_is_up)
+    if bar_index > 0
+        prev_source = source[1]
+        prev_close2 = Close2[1]
+        current_source = source
+        current_close2 = Close2
+        if prev_source >= prev_close2 and current_source < current_close2
+            array.push(crossing_bars, bar_index)
+            array.push(crossing_prices, current_close2)
+            array.push(crossing_is_up, false)
+            end_bar = math.max(bar_index, bar_index + 10)
+            new_line = line.new(x1 = bar_index, y1 = current_close2, x2 = end_bar, y2 = current_close2, color = crossing_line_color_down, width = crossing_line_width_down, extend = extend.none, style = line.style_solid)
+            array.push(crossing_lines, new_line)
+    update_line_ends(crossing_lines)
+
+
+//-----------------------------
+// 롱/숏 선물 매매전략 (KJBot 웹훅 연동)
+//-----------------------------
+var int pos_size = 0
+var float entry_price = na
+
+occ_bull_cross = ta.crossover(occ_closeAlt, occ_openAlt) 
+occ_bear_cross = ta.crossunder(occ_closeAlt, occ_openAlt)
+
+entry_time_allowed = not enable_entry_time_filter or time >= entry_time
+
+// 롱 진입
+long_condition = occ_bull_cross and entry_time_allowed
+if long_condition
+    string msg = ""
+    string kjbot_msg = ""
+    
+    if pos_size == -1
+        msg := "숏청산->롱"
+        // KJBot: 숏 포지션 먼저 청산
+        kjbot_msg := '{"action":"short_exit","symbol":"' + syminfo.ticker + '","percent":100}'
+    else if pos_size == 0
+        msg := "롱 진입"
+        
+    if pos_size != 1
+        pos_size := 1
+        entry_price := close
+        
+        if show_point_label
+            label.new(bar_index, low - ta.atr(14), text = msg + "\n" + format_price_upbit(close), style = label.style_label_up, color = color.rgb(61, 82, 219), textcolor = color.white, size = size.small)
+        
+        if enable_alert and not enable_kjbot
+            alert("거래알림: " + msg, alert.freq_once_per_bar_close)
+        
+        // KJBot 웹훅 알림
+        if enable_kjbot
+            if kjbot_msg != ""
+                // 먼저 숏 청산
+                alert(kjbot_msg, alert.freq_once_per_bar_close)
+            // 그 다음 롱 진입
+            string long_entry_msg = kjbot_position_mode == 'percent' ? '{"action":"long_entry","symbol":"' + syminfo.ticker + '","leverage":' + str.tostring(kjbot_leverage) + ',"percent":' + str.tostring(kjbot_balance_percent) + '}' : '{"action":"long_entry","symbol":"' + syminfo.ticker + '","leverage":' + str.tostring(kjbot_leverage) + ',"amount":' + str.tostring(kjbot_amount) + '}'
+            alert(long_entry_msg, alert.freq_once_per_bar_close)
+
+// 숏 진입
+short_condition = occ_bear_cross and entry_time_allowed
+if short_condition
+    string msg = ""
+    string kjbot_msg = ""
+    
+    if pos_size == 1
+        msg := "롱청산->숏"
+        // KJBot: 롱 포지션 먼저 청산
+        kjbot_msg := '{"action":"long_exit","symbol":"' + syminfo.ticker + '","percent":100}'
+    else if pos_size == 0
+        msg := "숏 진입"
+
+    if pos_size != -1
+        pos_size := -1
+        entry_price := close
+        
+        if show_point_label
+            label.new(bar_index, high + ta.atr(14), text = msg + "\n" + format_price_upbit(close), style = label.style_label_down, color = color.rgb(255, 92, 96), textcolor = color.white, size = size.small)
+            
+        if enable_alert and not enable_kjbot
+            alert("거래알림: " + msg, alert.freq_once_per_bar_close)
+        
+        // KJBot 웹훅 알림
+        if enable_kjbot
+            if kjbot_msg != ""
+                // 먼저 롱 청산
+                alert(kjbot_msg, alert.freq_once_per_bar_close)
+            // 그 다음 숏 진입
+            string short_entry_msg = kjbot_position_mode == 'percent' ? '{"action":"short_entry","symbol":"' + syminfo.ticker + '","leverage":' + str.tostring(kjbot_leverage) + ',"percent":' + str.tostring(kjbot_balance_percent) + '}' : '{"action":"short_entry","symbol":"' + syminfo.ticker + '","leverage":' + str.tostring(kjbot_leverage) + ',"amount":' + str.tostring(kjbot_amount) + '}'
+            alert(short_entry_msg, alert.freq_once_per_bar_close)
+
+
+// 분할 익절 로직
+var int last_tp_level = 0
+var int prev_pos_size = 0
+
+if pos_size != prev_pos_size
+    last_tp_level := 0
+    prev_pos_size := pos_size
+
+// 롱 분할 익절
+if pos_size == 1
+    int hit_count = 0
+    float last_hit_pct = 0.0
+    
+    while true
+        float next_profit_pct = (last_tp_level + 1) * 1.0
+        float next_target = entry_price * (1.0 + next_profit_pct * 0.01)
+        
+        if high >= next_target
+            last_tp_level := last_tp_level + 1
+            hit_count := hit_count + 1
+            last_hit_pct := next_profit_pct
+        else
+            break
+            
+    if hit_count > 0
+        string label_txt = "분할(" + str.tostring(last_hit_pct) + "%)"
+        if hit_count > 1
+            label_txt := "분할 x" + str.tostring(hit_count) + "\n(" + str.tostring(last_hit_pct) + "%)"
+            
+        if show_point_label
+            label.new(bar_index, high, text = label_txt, style = label.style_label_down, color = color.orange, textcolor = color.white, size = size.small)
+        
+        if enable_alert and not enable_kjbot
+            alert("롱익절 " + label_txt, alert.freq_once_per_bar_close)
+        
+        // KJBot 웹훅 - 분할 청산
+        if enable_kjbot
+            string long_exit_msg = '{"action":"long_exit","symbol":"' + syminfo.ticker + '","percent":' + str.tostring(kjbot_partial_percent) + '}'
+            alert(long_exit_msg, alert.freq_once_per_bar_close)
+
+// 숏 분할 익절
+if pos_size == -1
+    int hit_count = 0
+    float last_hit_pct = 0.0
+    
+    while true
+        float next_profit_pct = (last_tp_level + 1) * 1.0
+        float next_target = entry_price * (1.0 - next_profit_pct * 0.01)
+        
+        if low <= next_target
+            last_tp_level := last_tp_level + 1
+            hit_count := hit_count + 1
+            last_hit_pct := next_profit_pct
+        else
+            break
+            
+    if hit_count > 0
+        string label_txt = "분할(" + str.tostring(last_hit_pct) + "%)"
+        if hit_count > 1
+            label_txt := "분할 x" + str.tostring(hit_count) + "\n(" + str.tostring(last_hit_pct) + "%)"
+            
+        if show_point_label
+            label.new(bar_index, low, text = label_txt, style = label.style_label_up, color = color.orange, textcolor = color.white, size = size.small)
+            
+        if enable_alert and not enable_kjbot
+            alert("숏익절 " + label_txt, alert.freq_once_per_bar_close)
+        
+        // KJBot 웹훅 - 분할 청산
+        if enable_kjbot
+            string short_exit_msg = '{"action":"short_exit","symbol":"' + syminfo.ticker + '","percent":' + str.tostring(kjbot_partial_percent) + '}'
+            alert(short_exit_msg, alert.freq_once_per_bar_close)

@@ -1,0 +1,12 @@
+{
+    "version": 0,
+    "name": "kjbot",
+    "description": "KJBot - TradingView Webhook Trading Bot",
+    "priority": 9999,
+    "menu": {
+        "index": {
+            "label": "KJBOT",
+            "order": 9999
+        }
+    }
+}
