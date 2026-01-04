@@ -116,9 +116,6 @@ runcmd:
     AllowUnencrypted = true
     EOF
 
-  # Link to Cockpit
-  - ln -sf /opt/kjbot/cockpit-kjbot /usr/share/cockpit/kjbot
-
   # Enable Nginx - Remove default config to prevent 80 port conflict
   - rm -f /etc/nginx/sites-enabled/default
   - ln -sf /etc/nginx/sites-available/kjbot /etc/nginx/sites-enabled/
@@ -436,6 +433,13 @@ runcmd:
   - mv /opt/kjbot/dist/* /opt/kjbot/cockpit-kjbot/ 2>/dev/null || true
   - mv /opt/kjbot/manifest.json /opt/kjbot/cockpit-kjbot/ 2>/dev/null || true
   - rmdir /opt/kjbot/dist 2>/dev/null || true
+  
+  # Set permissions for Cockpit
+  - chmod -R 755 /opt/kjbot/cockpit-kjbot
+  - chown -R root:root /opt/kjbot/cockpit-kjbot
+  
+  # Create symbolic link to Cockpit
+  - ln -sf /opt/kjbot/cockpit-kjbot /usr/share/cockpit/kjbot
   
   # Start KJBot
   - systemctl daemon-reload
