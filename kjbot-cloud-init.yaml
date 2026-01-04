@@ -196,7 +196,7 @@ runcmd:
                     "margin_mode": "isolated"
                 },
                 "security": {
-                    "require_ip_whitelist": True,
+                    "require_ip_whitelist": False,
                     "allowed_ips": [],
                     "allowed_ips_count": 0
                 }
