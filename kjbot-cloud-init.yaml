@@ -1,0 +1,195 @@
+﻿#cloud-config
+# KJBot Complete Auto-Install Script v3.0
+# Simplified deployment with GitHub-hosted backend
+
+users:
+  - name: kjbot
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - python3
+  - python3-pip
+  - python3-venv
+  - python3-dev
+  - libssl-dev
+  - libffi-dev
+  - build-essential
+  - cockpit
+  - cockpit-ws
+  - cockpit-system
+  - git
+  - curl
+  - ufw
+  - nginx
+
+write_files:
+  # KJBot Systemd Service
+  - path: /etc/systemd/system/kjbot.service
+    content: |
+      [Unit]
+      Description=KJBot Webhook Server
+      After=network.target
+
+      [Service]
+      Type=simple
+      User=kjbot
+      WorkingDirectory=/opt/kjbot/backend
+      Environment="PATH=/opt/kjbot/venv/bin"
+      ExecStart=/opt/kjbot/venv/bin/python webhook_server.py
+      Restart=always
+      RestartSec=10
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Nginx Reverse Proxy Config (Single Port Architecture)
+  - path: /etc/nginx/sites-available/kjbot
+    content: |
+      server {
+          listen 80;
+          server_name _;
+
+          # Proxy to Cockpit (UI)
+          location / {
+              proxy_pass http://localhost:9090;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection "upgrade";
+          }
+
+          # Proxy to Backend (API)
+          location /webhook {
+              proxy_pass http://localhost:5000/webhook;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+          }
+
+          location /api {
+              proxy_pass http://localhost:5000/api;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+          }
+      }
+
+runcmd:
+  # Firewall setup
+  - ufw --force enable
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw allow 9090/tcp
+  - ufw allow 5000/tcp
+  - ufw reload
+
+  # Enable Cockpit
+  - systemctl enable cockpit.socket
+  - systemctl start cockpit.socket
+
+  # Create directories
+  - mkdir -p /opt/kjbot/backend
+  - mkdir -p /var/log/kjbot
+  - mkdir -p /etc/kjbot
+  - chown -R kjbot:kjbot /opt/kjbot
+  - chown -R kjbot:kjbot /var/log/kjbot
+  - chown -R kjbot:kjbot /etc/kjbot
+
+  # Python virtual environment
+  - sudo -u kjbot python3 -m venv /opt/kjbot/venv
+
+  # Configure Cockpit (Allow Reverse Proxy)
+  - |
+    IP=$(hostname -I | awk '{print $1}')
+    mkdir -p /etc/cockpit
+    cat > /etc/cockpit/cockpit.conf <<EOF
+    [WebService]
+    Origins = http://$IP http://localhost wss://$IP wss://localhost
+    ProtocolHeader = X-Forwarded-Proto
+    AllowUnencrypted = true
+    EOF
+
+  # Enable Nginx - Remove default config to prevent 80 port conflict
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/kjbot /etc/nginx/sites-enabled/
+  - systemctl restart nginx
+
+  # Download Backend files from GitHub (individual files for better version control)
+  - curl -L https://github.com/KJ-Cheon/kjbot-files/raw/main/backend/config_manager.py -o /opt/kjbot/backend/config_manager.py
+  - curl -L https://github.com/KJ-Cheon/kjbot-files/raw/main/backend/trading_engine.py -o /opt/kjbot/backend/trading_engine.py
+  - curl -L https://github.com/KJ-Cheon/kjbot-files/raw/main/backend/webhook_server.py -o /opt/kjbot/backend/webhook_server.py
+  - curl -L https://github.com/KJ-Cheon/kjbot-files/raw/main/backend/requirements.txt -o /opt/kjbot/backend/requirements.txt
+  - curl -L https://github.com/KJ-Cheon/kjbot-files/raw/main/backend/.env.example -o /opt/kjbot/backend/.env.example
+  
+  # Install Python packages
+  - sudo -u kjbot /opt/kjbot/venv/bin/pip install --upgrade pip
+  - sudo -u kjbot /opt/kjbot/venv/bin/pip install -r /opt/kjbot/backend/requirements.txt
+
+  # Download Cockpit GUI from GitHub
+  - curl -L https://github.com/KJ-Cheon/kjbot-files/raw/main/kjbot-manager-final.tar.gz -o /tmp/kjbot-gui.tar.gz
+  
+  # Extract GUI
+  - tar -xzf /tmp/kjbot-gui.tar.gz -C /opt/kjbot/
+  
+  # Move dist contents to cockpit-kjbot
+  - mkdir -p /opt/kjbot/cockpit-kjbot
+  - mv /opt/kjbot/dist/* /opt/kjbot/cockpit-kjbot/ 2>/dev/null || true
+  - mv /opt/kjbot/manifest.json /opt/kjbot/cockpit-kjbot/ 2>/dev/null || true
+  - rmdir /opt/kjbot/dist 2>/dev/null || true
+  
+  # Fix index.html path (ensure relative paths)
+  - |
+    cat > /opt/kjbot/cockpit-kjbot/index.html << 'EOFHTML'
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>KJBOT - TradingView Webhook Trading Bot</title>
+        <script type="module" src="index.js"></script>
+        <link rel="stylesheet" href="index.css">
+    </head>
+    <body>
+        <div id="root"></div>
+    </body>
+    </html>
+    EOFHTML
+  
+  # Link to Cockpit
+  - ln -sf /opt/kjbot/cockpit-kjbot /usr/share/cockpit/kjbot
+  
+  # Start KJBot
+  - systemctl daemon-reload
+  - systemctl enable kjbot
+  - systemctl start kjbot
+
+  # Final Cockpit restart to ensure GUI loads
+  - sleep 2
+  - systemctl restart cockpit
+
+  # Cleanup
+  - rm -f /tmp/kjbot-gui.tar.gz
+
+final_message: |
+  ========================================
+  KJBot v3.0 Installation Complete!
+  ========================================
+  
+  Cockpit: http://<SERVER_IP> (Port 80)
+  Webhook: http://<SERVER_IP>/webhook
+  
+  Backend: GitHub-hosted (Full Trading Logic)
+  GUI: GitHub-hosted (Cockpit Interface)
+  
+  Next Steps:
+  1. Access Cockpit Dashboard
+  2. Click "KJBOT" menu (bottom left)
+  3. Configure Binance API keys
+  4. Setup TradingView webhook
+  
+  ========================================
